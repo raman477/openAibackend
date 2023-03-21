@@ -132,3 +132,145 @@ def social_login(request):
     return Response({'data': data}, status=status.HTTP_200_OK)
 
 
+@api_view(['POST'])
+def textGenerator(request):
+    print(api_key)
+    if api_key is not None:
+        # aj=openai.Model.retrieve("text-davinci-003")
+        # print(aj)
+
+        response = openai.Completion.create(
+            model="text-davinci-003",
+            prompt=request.data['prompt'],
+            max_tokens=1000,
+            temperature=0.7,
+            top_p=1,
+            stop=None,
+            frequency_penalty=1.5,
+            presence_penalty=1.5
+
+            # echo=True
+        )
+        print(response)
+    return Response({"data": response['choices'][0]['text']})
+
+
+@api_view(['GET'])
+def get_subscription_packs(request,pk=None):
+    products_list = stripe.Product.list()
+    price_list = stripe.Price.list()
+    try:
+        final_list = [{"product_id": product.id, "product_name": product.name, "product_default_price": {
+            "id": price.id, "amount": price.unit_amount/100}} for price in price_list for product in products_list if price.product == product.id]
+        print(type(final_list))
+        return Response(final_list)
+    except Exception as e:
+        print(e)
+        return Response(e)
+
+
+@api_view(['POST'])
+def make_payments(req):
+    email = req.data['email']
+    pack_name = req.data['pack_name']
+    pack_price = req.data['pack_price']
+    pack_price_id = req.data['price_id']
+    try:
+        user = CustomUser.objects.get(email=email)
+        # create customer on stripe
+        stripe_customer = stripe.Customer.create(
+
+            email=email
+        )
+
+        # card_token = stripe.Token.create(
+        #     card={
+        #         "number": "4242424242424242",
+        #         "exp_month": 3,
+        #         "exp_year": 2024,
+        #         "cvc": "314",
+        #     },
+        # )
+
+        # create payment method
+        payment_method = stripe.PaymentMethod.create(
+            type="card",
+            card={
+                "number": "4242424242424242",
+                "exp_month": 8,
+                "exp_year": 2024,
+                "cvc": "314",
+            },
+        )
+
+        # attach payment method to customer
+        attach_payment = stripe.PaymentMethod.attach(
+            payment_method.id,
+            customer=stripe_customer.id,
+        )
+
+        # make attched payment as default of customer
+        default_method = stripe.Customer.modify(
+            stripe_customer.id,
+            invoice_settings={
+                "default_payment_method": payment_method.id,
+            }
+        )
+
+        # stripe_charge=stripe.Charge.create(
+        #     amount=2000,
+        #     currency="usd",
+        #     source=card_token.id,
+        #     description="my first payment",
+        # )
+        # print(stripe_charge)
+        # products_list= stripe.Product.list()
+        # products_list = stripe.Price.list()
+        subscription = stripe.Subscription.create(
+            customer=stripe_customer.id,
+            
+            # default_payment_method=payment_method.id,
+            # collection_method="send_invoice",
+            # days_until_due=1,
+            items=[
+                {"price": pack_price_id},
+            ],
+        )
+        # print('hiii',subscription)
+        data = {
+            "user": user.id,
+            "subscription_plan": pack_name,
+            "subscription_plan_id": subscription.id,
+            "subscription_plan_price": pack_price,
+            "subscription_plan_price_id": pack_price_id,
+            "subscription_status": subscription.status
+        }
+        user_subscription = UserSubscriptionSerializer(data=data)
+        print(user_subscription)
+        if user_subscription.is_valid():
+            user_subscription.save()
+            print(user_subscription)
+        else:
+            print(getFirstError(user_subscription.errors))
+        return Response(subscription)
+    except stripe.error.StripeError as e:
+        print(e)
+        return Response("fail")
+
+
+@api_view(["POST"])
+def cancel_susbscription(req):
+    subs_id = req.data['subs_id']
+    try:
+        cancel_subs_obj = stripe.Subscription.modify(
+            subs_id,
+            cancel_at_period_end=True
+        )
+        return Response(cancel_subs_obj)
+    except stripe.error.StripeError as e:
+        print(e)
+        return Response("fail")
+
+@api_view(['GET'])
+def test(request):
+    return JsonResponse({"data":"hiii im response for tetsing"})
